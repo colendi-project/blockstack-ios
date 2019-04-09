@@ -30,7 +30,7 @@ class Encryption {
         do {
             let aes = try AES(key: encryptionKey, blockMode: CBC(iv: initializationVector))
             let cipherText = try aes.encrypt(content)
-            guard let compressedEphemeralPKHex = Keys.getPublicKeyFromPrivate(ephemeralSK, compressed: true) else {
+            guard let compressedEphemeralPKHex = Keys.getPublicKeyFromPrivate(ephemeralSK, compressed: false) else {
                 return nil
             }
             let compressedEphemeralPKBytes = Bytes(hex: compressedEphemeralPKHex)
@@ -38,10 +38,9 @@ class Encryption {
             let mac = try HMAC(key: hmacKey, variant: .sha256).authenticate(macData)
             let cipherObject: [String: Any?] = [
                 "iv": initializationVector.toHexString(),
-                "ephemeralPK": compressedEphemeralPKHex,
-                "cipherText": Data(bytes: cipherText).hexEncodedString(),
-                "mac": mac.toHexString(),
-                "wasString": isString
+                "ephemPublicKey": compressedEphemeralPKHex,
+                "ciphertext": cipherText.toHexString(),
+                "mac": mac.toHexString()
             ]
             return cipherObject.toJsonString()
         } catch {
@@ -56,6 +55,37 @@ class Encryption {
     
     static func decryptECIES(cipherObjectJSONString: String, privateKey: String) -> DecryptedValue? {
         return EncryptionJS().decryptECIES(privateKey: privateKey, cipherObjectJSONString: cipherObjectJSONString)
+    }
+    
+    static func alternativeDecryptECIES(cipherObjectJSONString: String, privateKey: String) -> DecryptedValue? {
+        let jsonDecoder = JSONDecoder()
+        let jsonData = cipherObjectJSONString.data(using: .utf8)!
+        let dtsample = try! jsonDecoder.decode(dataModel.self, from: jsonData)
+        let outKeyDerive = Keys.deriveSharedSecret(ephemeralSecretKey: privateKey, recipientPublicKey: dtsample.ephemPublicKey!)
+        
+        let data = Bytes(hex: outKeyDerive!)
+        let hashedSecretBytes = data.sha512()
+        let encryptionKey = Array(hashedSecretBytes.prefix(32))
+        let hmacKey = Array(hashedSecretBytes.suffix(from: 32))
+        
+        let macData = Bytes(hex:dtsample.iv!) + Bytes(hex:dtsample.ephemPublicKey!) + Bytes(hex:dtsample.ciphertext!)
+        let mac = try? HMAC(key: hmacKey, variant: .sha256).authenticate(macData)
+        let macResult = String(bytes: mac!, encoding: String.Encoding.utf8)
+        let macBytes = Bytes(hex:dtsample.mac!)
+        
+        var result : String?
+        if(mac! == macBytes){
+            let aes = try? AES(key: encryptionKey, blockMode: CBC(iv: Bytes(hex:dtsample.iv!)))
+            let decryptedBytes = try? aes?.decrypt(Bytes(hex:dtsample.ciphertext!))
+            
+            result = String(bytes: decryptedBytes!!, encoding: String.Encoding.utf8)
+        }
+        else {
+            print("----- BAD MAC -----")
+            result = "BAD MAC"
+        }
+        
+        return DecryptedValue(text: result!);
     }
 }
 
@@ -76,4 +106,19 @@ public struct DecryptedValue {
         self.bytes = bytes
         self.plainText = nil
     }
+}
+
+struct dataModel : Codable{
+    var ephemPublicKey:String?
+    var iv:String?
+    var mac:String?
+    var ciphertext:String?
+    
+    private enum CodingKeys: String, CodingKey {
+        case ephemPublicKey
+        case iv
+        case mac
+        case ciphertext
+    }
+    
 }

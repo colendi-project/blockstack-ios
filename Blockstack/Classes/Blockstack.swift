@@ -660,7 +660,7 @@ public enum BlockstackConstants {
         guard let key = privateKey ?? Blockstack.shared.loadUserData()?.privateKey else {
             return nil
         }
-        return Encryption.decryptECIES(cipherObjectJSONString: content, privateKey: key)
+        return Encryption.alternativeDecryptECIES(cipherObjectJSONString: content, privateKey: key)
     }
 
     // MARK: - Private
